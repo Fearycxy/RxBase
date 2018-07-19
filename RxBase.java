@@ -2,12 +2,14 @@ package com.base.utils.rx;
 
 import android.support.annotation.NonNull;
 import android.telecom.Call;
+import android.view.View;
 
 import com.baidu.platform.comapi.map.C;
 import com.base.common.BuildConfig;
 import com.base.log.MyLog;
 import com.base.utils.Constants;
 import com.base.utils.toast.ToastUtils;
+import com.jakewharton.rxbinding.view.RxView;
 
 import java.util.Arrays;
 import java.util.List;
@@ -84,6 +86,19 @@ public class RxBase<T> {
 
     public static void postIo(Runnable runnable) {
         postIo(runnable, null);
+    }
+
+    public final RxBase<T> throttleFirst(long windowDuration, TimeUnit unit) {
+        observable.throttleFirst(windowDuration, unit);
+        return this;
+    }
+
+    public final <E> RxBase<T> takeUntil(Observable<? extends E> other) {
+        return new RxBase<T>(observable.takeUntil(other));
+    }
+
+    public static RxBase<Void> clicks(@NonNull View view) {
+        return new RxBase<Void>(RxView.clicks(view));
     }
 
     public static void postIo(Runnable runnable, RxLife rxLife) {
