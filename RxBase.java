@@ -58,35 +58,11 @@ public class RxBase<T> {
     }
 
     public static <T> void post(Callback<T> callback) {
-        post(callback, null);
+        RxBase.create(callback).letsgo();
     }
 
-    public static <T> void post(Callback<T> callback, RxLife rxLife) {
-        RxBase base = RxBase.create(new Callback<T>() {
-            @Override
-            public void onNext(T t) {
-                callback.onNext(t);
-            }
-
-            @Override
-            public void onError(Throwable e) {
-                callback.onError(e);
-            }
-
-            @Override
-            public void onCompleted() {
-                callback.onCompleted();
-            }
-
-            @Override
-            public T run() {
-                return callback.run();
-            }
-        });
-        if (rxLife != null) {
-            base.bindLife(rxLife);
-        }
-        base.letsgo();
+    public static <T> void post(Callback<T> callback, @NonNull RxLife rxLife) {
+        RxBase.create(callback).bindLife(rxLife).letsgo();
     }
 
     public static void post(Runnable runnable) {
