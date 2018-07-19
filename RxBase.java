@@ -9,6 +9,7 @@ import com.base.log.MyLog;
 import com.base.utils.Constants;
 import com.base.utils.toast.ToastUtils;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -21,6 +22,7 @@ import rx.android.schedulers.AndroidSchedulers;
 import rx.functions.Action0;
 import rx.functions.Action1;
 import rx.functions.Func1;
+import rx.internal.util.ScalarSynchronousObservable;
 import rx.schedulers.Schedulers;
 
 /**
@@ -63,6 +65,49 @@ public class RxBase<T> {
                 subscriber.onCompleted();
             }
         });
+    }
+
+    public static <T> void post(Callback<T> callback) {
+        RxBase.create(new Callback<T>() {
+            @Override
+            public void onNext(T t) {
+                callback.onNext(t);
+            }
+
+            @Override
+            public void onError(Throwable e) {
+                callback.onError(e);
+            }
+
+            @Override
+            public void onCompleted() {
+                callback.onCompleted();
+            }
+
+            @Override
+            public T run() {
+                return callback.run();
+            }
+        }).letsgo();
+    }
+
+    public static void post(Runnable runnable) {
+        RxBase.create(new Task<Object>() {
+            @Override
+            public void onNext(Object o) {
+                runnable.run();
+            }
+        }).letsgo();
+    }
+
+    public static void postIo(Runnable runnable) {
+        RxBase.create(new Task<Object>() {
+            @Override
+            public Object run() {
+                runnable.run();
+                return null;
+            }
+        }).letsgo();
     }
 
     public static <T> RxBase<T> create(@NonNull Callback<T> callback) {
@@ -200,6 +245,28 @@ public class RxBase<T> {
         return new RxBase<List<T>>(observable.toList());
     }
 
+    public static <T> RxBase<T> just(final T value) {
+        return new RxBase<T>(Observable.just(value));
+    }
+
+    // suppress unchecked because we are using varargs inside the method
+    @SuppressWarnings("unchecked")
+    public static <T> RxBase<T> just(T t1, T t2) {
+        return from(Arrays.asList(t1, t2));
+    }
+
+    // suppress unchecked because we are using varargs inside the method
+    @SuppressWarnings("unchecked")
+    public static <T> RxBase<T> just(T t1, T t2, T t3) {
+        return from(Arrays.asList(t1, t2, t3));
+    }
+
+    // suppress unchecked because we are using varargs inside the method
+    @SuppressWarnings("unchecked")
+    public static <T> RxBase<T> just(T t1, T t2, T t3, T t4) {
+        return from(Arrays.asList(t1, t2, t3, t4));
+    }
+
 
     public Subscription subscribe(@NonNull Observer<T> observer) {
         return observable.subscribeOn(subscribeThread)
@@ -294,14 +361,14 @@ public class RxBase<T> {
         }
     }
 
-    public static abstract class Task<T> implements Callback<T> {
+    public interface Task<T> extends Callback<T> {
         @Override
-        public T run() {
+        default T run() {
             return null;
         }
 
         @Override
-        public void onNext(T o) {
+        default void onNext(T o) {
 
         }
     }
