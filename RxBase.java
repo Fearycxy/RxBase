@@ -31,17 +31,7 @@ import rx.schedulers.Schedulers;
 
 /**
  * RxBase 使用方法
- * RxBase.create(new RxBase.Callback<Object>() {
- *
- * @Override public Object run() {
- * //此处为耗时方法
- * return null;
- * }
- * @Override public void onNext(Object o) {
- * //此处为主线程回调
- * }
- * //目前想到的是回调onError直接throw {@link RxException}
- * }).bindLife(this).letsgo();
+ * RxBase.post({this is your equation});
  * //默认io运行，主线程回调，也可指定其他线程
  */
 public class RxBase<T> {
@@ -68,7 +58,11 @@ public class RxBase<T> {
     }
 
     public static <T> void post(Callback<T> callback) {
-        RxBase.create(new Callback<T>() {
+        post(callback, null);
+    }
+
+    public static <T> void post(Callback<T> callback, RxLife rxLife) {
+        RxBase base = RxBase.create(new Callback<T>() {
             @Override
             public void onNext(T t) {
                 callback.onNext(t);
@@ -88,26 +82,46 @@ public class RxBase<T> {
             public T run() {
                 return callback.run();
             }
-        }).letsgo();
+        });
+        if (rxLife != null) {
+            base.bindLife(rxLife);
+        }
+        base.letsgo();
     }
 
     public static void post(Runnable runnable) {
-        RxBase.create(new Task<Object>() {
+        post(runnable, null);
+    }
+
+    public static void post(Runnable runnable, RxLife rxLife) {
+        RxBase base = RxBase.create(new Task<Object>() {
             @Override
             public void onNext(Object o) {
                 runnable.run();
             }
-        }).letsgo();
+        });
+        if (rxLife != null) {
+            base.bindLife(rxLife);
+        }
+        base.letsgo();
     }
 
     public static void postIo(Runnable runnable) {
-        RxBase.create(new Task<Object>() {
+        postIo(runnable, null);
+    }
+
+    public static void postIo(Runnable runnable, RxLife rxLife) {
+        RxBase base = RxBase.create(new Task<Object>() {
             @Override
             public Object run() {
                 runnable.run();
                 return null;
             }
-        }).letsgo();
+        });
+        if (rxLife != null) {
+            base.bindLife(rxLife);
+        }
+        base.letsgo();
     }
 
     public static <T> RxBase<T> create(@NonNull Callback<T> callback) {
