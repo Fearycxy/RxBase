@@ -1,10 +1,8 @@
 package com.base.utils.rx;
 
 import android.support.annotation.NonNull;
-import android.telecom.Call;
 import android.view.View;
 
-import com.baidu.platform.comapi.map.C;
 import com.base.common.BuildConfig;
 import com.base.log.MyLog;
 import com.base.utils.Constants;
@@ -24,7 +22,6 @@ import rx.android.schedulers.AndroidSchedulers;
 import rx.functions.Action0;
 import rx.functions.Action1;
 import rx.functions.Func1;
-import rx.internal.util.ScalarSynchronousObservable;
 import rx.schedulers.Schedulers;
 
 /**
@@ -34,13 +31,13 @@ import rx.schedulers.Schedulers;
 /**
  * RxBase 使用方法
  * RxBase.post({this is your equation});
- * //默认io运行，主线程回调，也可指定其他线程
+ * 如希望调用OnError 直接throw {@link RxException}
+ * 但切记，如果希望回调{@link Callback#onError(Throwable)}，一定要实现ta ,不然你这样的操作没有意义，我会直接throw出去
  */
 public class RxBase<T> {
     private Callback<T> callback;
-    private Scheduler subscribeThread = Schedulers.io();
-    private Scheduler observerThread = AndroidSchedulers.mainThread();
     private Observable<T> observable;
+    private boolean isCallDefault = false;
 
     private RxBase(@NonNull Callback<T> callback) {
         this.callback = callback;
@@ -60,11 +57,11 @@ public class RxBase<T> {
     }
 
     public static <T> void post(Callback<T> callback) {
-        RxBase.create(callback).letsgo();
+        RxBase.create(callback).defaultCall();
     }
 
     public static <T> void post(Callback<T> callback, @NonNull RxLife rxLife) {
-        RxBase.create(callback).bindLife(rxLife).letsgo();
+        RxBase.create(callback).bindLife(rxLife).defaultCall();
     }
 
     public static void post(Runnable runnable) {
@@ -81,7 +78,7 @@ public class RxBase<T> {
         if (rxLife != null) {
             base.bindLife(rxLife);
         }
-        base.letsgo();
+        base.defaultCall();
     }
 
     public static void postIo(Runnable runnable) {
@@ -89,7 +86,7 @@ public class RxBase<T> {
     }
 
     public final RxBase<T> throttleFirst(long windowDuration, TimeUnit unit) {
-        observable.throttleFirst(windowDuration, unit);
+        observable = observable.throttleFirst(windowDuration, unit);
         return this;
     }
 
@@ -112,9 +109,18 @@ public class RxBase<T> {
         if (rxLife != null) {
             base.bindLife(rxLife);
         }
-        base.letsgo();
+        base.defaultCall();
     }
 
+    /**
+     * 此方法最后结束时默认线程请使用{@link #defaultCall()}，如自定义线程请使用{@link #subscribe()}
+     * <p>
+     * 如调用流转换， 请使用结束操作符为{@link #subscribe(Action1),#subscribe(Action1, Action1),#subscribe(Action1, Action1, Action0)}
+     * <p>
+     * 但此时，对应的Create的Callback里的{@link Callback#onNext(Object),Callback#onError(Throwable),Callback#onCompleted()}无效，会直接调用最后传入的调用
+     * <p>
+     * 如不想写不实现的方法，可使用{@link Task}简化
+     */
     public static <T> RxBase<T> create(@NonNull Callback<T> callback) {
         return new RxBase<>(callback);
     }
@@ -140,12 +146,12 @@ public class RxBase<T> {
     }
 
     public final RxBase<T> delay(long delay, TimeUnit unit) {
-        observable.delay(delay, unit);
+        observable = observable.delay(delay, unit);
         return this;
     }
 
     public final RxBase<T> bindLife(@NonNull RxLife f) {
-        observable.compose(f.bindUntilEvent());
+        observable = observable.compose(f.bindUntilEvent());
         return this;
     }
 
@@ -155,7 +161,7 @@ public class RxBase<T> {
 
 
     public final RxBase<T> retry(int times) {
-        observable.retryWhen(new RxRetryAssist(times, "retry exceed " + times + " times"));
+        observable = observable.retryWhen(new RxRetryAssist(times, "retry exceed " + times + " times"));
         return this;
     }
 
@@ -165,32 +171,46 @@ public class RxBase<T> {
      * @see #bindLife(RxLife)
      */
     public final RxBase<T> compose(Observable.Transformer<T, T> transformer) {
-        observable.compose(transformer);
+        observable = observable.compose(transformer);
         return this;
     }
 
     public final RxBase<T> subscribeOn(Scheduler scheduler) {
-        subscribeThread = scheduler;
+        isCallDefault = true;
+        observable = observable.subscribeOn(scheduler);
         return this;
     }
 
     public final RxBase<T> observeOn(Scheduler scheduler) {
-        observerThread = scheduler;
+        isCallDefault = true;
+        observable = observable.observeOn(scheduler);
         return this;
     }
 
     public final RxBase<T> filter(Func1<? super T, Boolean> predicate) {
-        observable.filter(predicate);
+        observable = observable.filter(predicate);
         return this;
     }
 
-    public Subscription letsgo() {
-        return subscribe();
-    }
-
-    public Subscription subscribe() {
-        return observable.subscribeOn(subscribeThread)
-                .observeOn(observerThread)
+    /**
+     * 此方法io运行，主线程回调，不可更改，更改直接崩溃！！！！！！！
+     * <p>
+     * 后面几个subscribe方法没有默认线程调用的操作，完全与RXjava相同，复杂操作请使用{@link #subscribe}
+     * <p>
+     * 切忌，此方法仅适合调用{@link #filter(Func1),#compose(Observable.Transformer),#bindLife(RxLife),#retry(int)}等简易的无流变化的操作符，
+     * <p>
+     * !!!!!!!不可自定义调用线程{@link #observeOn(Scheduler) {@link #subscribeOn(Scheduler)}}!!!!!!!!! 调用会崩溃
+     * <p>
+     * 调用了{@link #flatMap(Func1),#lift(Observable.Operator),#buffer(int),#distinct(Func1)}等流转换的操作符，不要调用此方法，以免混淆
+     * <p>
+     * <p>
+     * 上面所有复杂的自定义需求请最好调用{@link #subscribe(),#subscribe(Action1),#subscribe(Action1, Action1)}，这几个方法没有自定义默认线程策略，完全跟RX一致
+     */
+    public Subscription defaultCall() {
+        if (isCallDefault)
+            throw new RxException("Please obey the RXBase Rule: do not call defaultCall and with thread or flatMap or map or lift and so on!!!!");
+        return observable.subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(new Subscriber<T>() {
 
                     @Override
@@ -218,32 +238,58 @@ public class RxBase<T> {
                 });
     }
 
+    public Subscription subscribe() {
+        return observable.subscribe(new Subscriber<T>() {
+
+            @Override
+            public void onCompleted() {
+                if (callback != null) {
+                    callback.onCompleted();
+                }
+            }
+
+            @Override
+            public void onError(Throwable e) {
+                if (callback != null) {
+                    callback.onError(e);
+                } else {
+                    baseError(e);
+                }
+            }
+
+            @Override
+            public void onNext(T t) {
+                if (callback != null) {
+                    callback.onNext(t);
+                }
+            }
+        });
+    }
+
     public Subscription subscribe(@NonNull Action1<T> action1) {
-        return observable.subscribeOn(subscribeThread)
-                .observeOn(observerThread)
-                .subscribe(new Subscriber<T>() {
+        return observable.subscribe(new Subscriber<T>() {
 
-                    @Override
-                    public void onCompleted() {
-                        if (callback != null) {
-                            callback.onCompleted();
-                        }
-                    }
+            @Override
+            public void onCompleted() {
+                if (callback != null) {
+                    callback.onCompleted();
+                }
+            }
 
-                    @Override
-                    public void onError(Throwable e) {
-                        if (callback != null) {
-                            callback.onError(e);
-                        } else {
-                            baseError(e);
-                        }
-                    }
+            @Override
+            public void onError(Throwable e) {
+                if (callback != null) {
+                    callback.onError(e);
+                } else {
+                    baseError(e);
+                }
+            }
 
-                    @Override
-                    public void onNext(T t) {
-                        action1.call(t);
-                    }
-                });
+            @Override
+            public void onNext(T t) {
+                action1.call(t);
+            }
+        });
     }
 
     public final RxBase<List<T>> toList() {
@@ -274,25 +320,23 @@ public class RxBase<T> {
 
 
     public Subscription subscribe(@NonNull Observer<T> observer) {
-        return observable.subscribeOn(subscribeThread)
-                .observeOn(observerThread)
-                .subscribe(new Subscriber<T>() {
+        return observable.subscribe(new Subscriber<T>() {
 
-                    @Override
-                    public void onCompleted() {
-                        observer.onCompleted();
-                    }
+            @Override
+            public void onCompleted() {
+                observer.onCompleted();
+            }
 
-                    @Override
-                    public void onError(Throwable e) {
-                        observer.onError(e);
-                    }
+            @Override
+            public void onError(Throwable e) {
+                observer.onError(e);
+            }
 
-                    @Override
-                    public void onNext(T t) {
-                        observer.onNext(t);
-                    }
-                });
+            @Override
+            public void onNext(T t) {
+                observer.onNext(t);
+            }
+        });
     }
 
     public final <R> RxBase<R> map(Func1<? super T, ? extends R> func) {
@@ -300,32 +344,29 @@ public class RxBase<T> {
     }
 
     public Subscription subscribe(@NonNull Action1<T> next, @NonNull Action1<Throwable> error) {
-        return observable.subscribeOn(subscribeThread)
-                .observeOn(observerThread)
-                .subscribe(new Subscriber<T>() {
+        return observable.subscribe(new Subscriber<T>() {
 
-                    @Override
-                    public void onCompleted() {
-                        if (callback != null) {
-                            callback.onCompleted();
-                        }
-                    }
+            @Override
+            public void onCompleted() {
+                if (callback != null) {
+                    callback.onCompleted();
+                }
+            }
 
-                    @Override
-                    public void onError(Throwable e) {
-                        error.call(e);
-                    }
+            @Override
+            public void onError(Throwable e) {
+                error.call(e);
+            }
 
-                    @Override
-                    public void onNext(T t) {
-                        next.call(t);
-                    }
-                });
+            @Override
+            public void onNext(T t) {
+                next.call(t);
+            }
+        });
     }
 
     public Subscription subscribe(@NonNull Action1<T> next, @NonNull Action1<Throwable> error, @NonNull Action0 complete) {
-        return observable.subscribeOn(subscribeThread)
-                .observeOn(observerThread)
+        return observable
                 .subscribe(new Subscriber<T>() {
 
                     @Override

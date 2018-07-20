@@ -3,6 +3,9 @@ package com.base.utils.rx;
 import android.os.Build;
 import android.support.annotation.RequiresApi;
 
+/**
+ * 配合{@link RxBase}使用，直接在{@link RxBase.Callback#run()}方法里throw,并Override里面的{@link RxBase.Callback#onError(Throwable)}
+ */
 public class RxException extends RuntimeException {
     /**
      * Constructs a new runtime exception with {@code null} as its
