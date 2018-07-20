@@ -56,6 +56,11 @@ public class RxBase<T> {
         });
     }
 
+    /**
+     * io运行，主线程回调
+     * @param callback
+     * @param <T>
+     */
     public static <T> void post(Callback<T> callback) {
         RxBase.create(callback).defaultCall();
     }
@@ -64,6 +69,10 @@ public class RxBase<T> {
         RxBase.create(callback).bindLife(rxLife).defaultCall();
     }
 
+    /**
+     * 主线程回调
+     * @param runnable
+     */
     public static void post(Runnable runnable) {
         post(runnable, null);
     }
@@ -81,6 +90,10 @@ public class RxBase<T> {
         base.defaultCall();
     }
 
+    /**
+     * IO线程回调
+     * @param runnable
+     */
     public static void postIo(Runnable runnable) {
         postIo(runnable, null);
     }
