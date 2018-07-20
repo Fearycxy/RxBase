@@ -11,6 +11,8 @@ import com.jakewharton.rxbinding.view.RxView;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import rx.Observable;
@@ -19,10 +21,16 @@ import rx.Scheduler;
 import rx.Subscriber;
 import rx.Subscription;
 import rx.android.schedulers.AndroidSchedulers;
+import rx.annotations.Experimental;
 import rx.functions.Action0;
 import rx.functions.Action1;
 import rx.functions.Func1;
+import rx.internal.operators.OnSubscribeFromCallable;
+import rx.internal.operators.OnSubscribeFromIterable;
+import rx.internal.operators.OnSubscribeTimerPeriodically;
+import rx.internal.operators.OnSubscribeToObservableFuture;
 import rx.schedulers.Schedulers;
+import rx.subjects.ReplaySubject;
 
 /**
  * Created by feary on 18-4-27.
@@ -33,8 +41,10 @@ import rx.schedulers.Schedulers;
  * RxBase.post({this is your equation});
  * 如希望调用OnError 直接throw {@link RxException}
  * 但切记，如果希望回调{@link Callback#onError(Throwable)}，一定要实现ta ,不然你这样的操作没有意义，我会直接throw出去
+ * 如果有需要Rx的其他操作符，直接加在这里，
+ * 如果有其他自定义方法，建议新建类继承此类，类名写在这里{@link}，不要都放在这一个类里，以免耦合
  */
-public class RxBase<T> {
+public final class RxBase<T> {
     private Callback<T> callback;
     private Observable<T> observable;
     private boolean isCallDefault = false;
@@ -58,26 +68,28 @@ public class RxBase<T> {
 
     /**
      * io运行，主线程回调
+     *
      * @param callback
      * @param <T>
      */
-    public static <T> void post(Callback<T> callback) {
-        RxBase.create(callback).defaultCall();
+    public static <T> Subscription post(Callback<T> callback) {
+        return RxBase.create(callback).defaultCall();
     }
 
-    public static <T> void post(Callback<T> callback, @NonNull RxLife rxLife) {
-        RxBase.create(callback).bindLife(rxLife).defaultCall();
+    public static <T> Subscription post(Callback<T> callback, @NonNull RxLife rxLife) {
+        return RxBase.create(callback).bindLife(rxLife).defaultCall();
     }
 
     /**
      * 主线程回调
+     *
      * @param runnable
      */
-    public static void post(Runnable runnable) {
-        post(runnable, null);
+    public static Subscription post(Runnable runnable) {
+        return post(runnable, null);
     }
 
-    public static void post(Runnable runnable, RxLife rxLife) {
+    public static Subscription post(Runnable runnable, RxLife rxLife) {
         RxBase base = RxBase.create(new Task<Object>() {
             @Override
             public void onNext(Object o) {
@@ -87,15 +99,16 @@ public class RxBase<T> {
         if (rxLife != null) {
             base.bindLife(rxLife);
         }
-        base.defaultCall();
+        return base.defaultCall();
     }
 
     /**
      * IO线程回调
+     *
      * @param runnable
      */
-    public static void postIo(Runnable runnable) {
-        postIo(runnable, null);
+    public static Subscription postIo(Runnable runnable) {
+        return postIo(runnable, null);
     }
 
     public final RxBase<T> throttleFirst(long windowDuration, TimeUnit unit) {
@@ -111,7 +124,44 @@ public class RxBase<T> {
         return new RxBase<Void>(RxView.clicks(view));
     }
 
-    public static void postIo(Runnable runnable, RxLife rxLife) {
+    public final static <T> RxBase<T> from(Future<? extends T> future) {
+        return new RxBase<T>(Observable.from(future));
+    }
+
+    public final static <T> RxBase<T> from(Future<? extends T> future, long timeout, TimeUnit unit) {
+        return new RxBase<T>(Observable.from(future, timeout, unit));
+    }
+
+    public final static <T> RxBase<T> from(Future<? extends T> future, Scheduler scheduler) {
+        return new RxBase<T>(Observable.from(future, scheduler));
+    }
+
+    public final static <T> RxBase<T> from(T[] array) {
+        return new RxBase<T>(Observable.from(Arrays.asList(array)));
+    }
+
+    @Experimental
+    public static <T> RxBase<T> fromCallable(Callable<? extends T> func) {
+        return new RxBase<T>(Observable.fromCallable(func));
+    }
+
+    public final static RxBase<Long> interval(long interval, TimeUnit unit) {
+        return interval(interval, interval, unit, Schedulers.computation());
+    }
+
+    public final static RxBase<Long> interval(long interval, TimeUnit unit, Scheduler scheduler) {
+        return interval(interval, interval, unit, scheduler);
+    }
+
+    public final static RxBase<Long> interval(long initialDelay, long period, TimeUnit unit) {
+        return interval(initialDelay, period, unit, Schedulers.computation());
+    }
+
+    public final static RxBase<Long> interval(long initialDelay, long period, TimeUnit unit, Scheduler scheduler) {
+        return new RxBase<Long>(Observable.interval(initialDelay, period, unit, scheduler));
+    }
+
+    public static Subscription postIo(Runnable runnable, RxLife rxLife) {
         RxBase base = RxBase.create(new Task<Object>() {
             @Override
             public Object run() {
@@ -122,7 +172,7 @@ public class RxBase<T> {
         if (rxLife != null) {
             base.bindLife(rxLife);
         }
-        base.defaultCall();
+        return base.defaultCall();
     }
 
     /**
@@ -178,6 +228,11 @@ public class RxBase<T> {
         return this;
     }
 
+    public final RxBase<T> retryWhen(final Func1<? super Observable<? extends Throwable>, ? extends Observable<?>> notificationHandler) {
+        observable = observable.retryWhen(notificationHandler);
+        return this;
+    }
+
     /**
      * 直接调用上面的bindLife
      *
@@ -222,33 +277,9 @@ public class RxBase<T> {
     public Subscription defaultCall() {
         if (isCallDefault)
             throw new RxException("Please obey the RXBase Rule: do not call defaultCall and with thread or flatMap or map or lift and so on!!!!");
-        return observable.subscribeOn(Schedulers.io())
+        return subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(new Subscriber<T>() {
-
-                    @Override
-                    public void onCompleted() {
-                        if (callback != null) {
-                            callback.onCompleted();
-                        }
-                    }
-
-                    @Override
-                    public void onError(Throwable e) {
-                        if (callback != null) {
-                            callback.onError(e);
-                        } else {
-                            baseError(e);
-                        }
-                    }
-
-                    @Override
-                    public void onNext(T t) {
-                        if (callback != null) {
-                            callback.onNext(t);
-                        }
-                    }
-                });
+                .subscribe();
     }
 
     public Subscription subscribe() {
@@ -284,18 +315,11 @@ public class RxBase<T> {
 
             @Override
             public void onCompleted() {
-                if (callback != null) {
-                    callback.onCompleted();
-                }
             }
 
             @Override
             public void onError(Throwable e) {
-                if (callback != null) {
-                    callback.onError(e);
-                } else {
-                    baseError(e);
-                }
+                baseError(e);
             }
 
             @Override
@@ -331,25 +355,8 @@ public class RxBase<T> {
         return from(Arrays.asList(t1, t2, t3, t4));
     }
 
-
     public Subscription subscribe(@NonNull Observer<T> observer) {
-        return observable.subscribe(new Subscriber<T>() {
-
-            @Override
-            public void onCompleted() {
-                observer.onCompleted();
-            }
-
-            @Override
-            public void onError(Throwable e) {
-                observer.onError(e);
-            }
-
-            @Override
-            public void onNext(T t) {
-                observer.onNext(t);
-            }
-        });
+        return observable.subscribe(observer);
     }
 
     public final <R> RxBase<R> map(Func1<? super T, ? extends R> func) {
@@ -357,46 +364,12 @@ public class RxBase<T> {
     }
 
     public Subscription subscribe(@NonNull Action1<T> next, @NonNull Action1<Throwable> error) {
-        return observable.subscribe(new Subscriber<T>() {
-
-            @Override
-            public void onCompleted() {
-                if (callback != null) {
-                    callback.onCompleted();
-                }
-            }
-
-            @Override
-            public void onError(Throwable e) {
-                error.call(e);
-            }
-
-            @Override
-            public void onNext(T t) {
-                next.call(t);
-            }
-        });
+        return observable.subscribe(next, error);
     }
 
     public Subscription subscribe(@NonNull Action1<T> next, @NonNull Action1<Throwable> error, @NonNull Action0 complete) {
         return observable
-                .subscribe(new Subscriber<T>() {
-
-                    @Override
-                    public void onCompleted() {
-                        complete.call();
-                    }
-
-                    @Override
-                    public void onError(Throwable e) {
-                        error.call(e);
-                    }
-
-                    @Override
-                    public void onNext(T t) {
-                        next.call(t);
-                    }
-                });
+                .subscribe(next, error, complete);
     }
 
     private static void baseError(Throwable e) {
@@ -412,6 +385,12 @@ public class RxBase<T> {
 
         void onNext(T t);
 
+        /**
+         * 如果使用流转换操作符，则这里的实现是无效的，因为这个已经被包了一层，
+         * 同样无效的是onNext和onCompleted，本来要转换你要还这样写也没什么意义
+         *
+         * @return
+         */
         default void onError(Throwable e) {
             baseError(e);
         }
